@@ -1379,6 +1379,8 @@ def func_contact_mpr_terrain(
                     )
                 center_a = gu.qd_transform_by_trans_quat(dyn_info.geoms.center[i_ga], ga_pos_tf, ga_quat_tf)
 
+                for v in qd.static(range(3)):
+                    collider_state.prism[v, i_b][2] = collider_info.terrain_xyz_maxmin[5]
                 for r in range(r_min, r_max):
                     nvert = 0
                     for c in range(c_min, c_max + 1):
@@ -1392,7 +1394,12 @@ def func_contact_mpr_terrain(
                                     collider_info.terrain_hf[r + i, c] + margin,
                                     collider_state,
                                 )
-                                if nvert > 2 and (
+                                exact_cell = False
+                                if qd.static(collider_static_config.has_exact_terrain_surface):
+                                    if c > c_min:
+                                        cell = r * (collider_info.terrain_rc[1]-1) + c-1
+                                        exact_cell = collider_info.terrain_exact_surface_cell_mask[cell] != 0
+                                if nvert > 2 and not exact_cell and (
                                     collider_state.prism[3, i_b][2] >= collider_state.xyz_max_min[5, i_b]
                                     or collider_state.prism[4, i_b][2] >= collider_state.xyz_max_min[5, i_b]
                                     or collider_state.prism[5, i_b][2] >= collider_state.xyz_max_min[5, i_b]
@@ -1522,6 +1529,149 @@ def func_contact_mpr_terrain(
                                                         rigid_info,
                                                         rigid_config,
                                                     )
+                if qd.static(collider_static_config.has_exact_terrain_surface):
+                    for r in range(r_min, r_max):
+                        for c in range(c_min, c_max):
+                            cell = r * (collider_info.terrain_rc[1]-1) + c
+                            begin = collider_info.terrain_exact_surface_cell_offsets[cell]
+                            end = collider_info.terrain_exact_surface_cell_offsets[cell+1]
+                            for ref in range(begin, end):
+                                if n_con >= qd.static(collider_static_config.n_contacts_per_convex_pair):
+                                    break
+                                feature = collider_info.terrain_exact_surface_feature_indices[ref]
+                                feature_normal = collider_info.terrain_exact_surface_normals[feature]
+                                for v in qd.static(range(3)):
+                                    vertex = collider_info.terrain_exact_surface_triangles[feature, v]
+                                    collider_state.prism[v, i_b] = vertex-feature_normal
+                                    collider_state.prism[v+3, i_b] = vertex
+                                center_b = qd.Vector.zero(gs.qd_float, 3)
+                                for i_p in qd.static(range(6)):
+                                    center_b = center_b + collider_state.prism[i_p, i_b]
+                                center_b = center_b / 6.0
+
+                                is_col, normal, penetration, contact_pos = mpr.func_mpr_contact_from_centers(
+                                    i_ga,
+                                    i_gb,
+                                    i_b,
+                                    center_a,
+                                    center_b,
+                                    ga_pos_tf,
+                                    ga_quat_tf,
+                                    gb_pos_terrain_frame,
+                                    gb_quat_terrain_frame,
+                                    geoms_init_AABB,
+                                    collider_state,
+                                    mpr_state,
+                                    dyn_info,
+                                    collider_info,
+                                    rigid_config,
+                                    collider_static_config,
+                                )
+                                expected_alignment = normal.dot(feature_normal)
+                                valid_surface = is_col and penetration > 0.0 and expected_alignment > 0.0
+                                for v in qd.static(range(3)):
+                                    edge = collider_state.prism[(v+1)%3+3, i_b] - collider_state.prism[v+3, i_b]
+                                    side_normal = edge.cross(feature_normal).normalized()
+                                    if normal.dot(side_normal) >= expected_alignment:
+                                        valid_surface = False
+                                if valid_surface:
+                                    snap_fired = False
+                                    face_face = False
+                                    # Snap normal to the prism's top face normal when MPR's reported normal is
+                                    # already close to it. Cell boundaries on a SMOOTH heightfield are
+                                    # discretization artefacts, not physical edges, and MPR's polytope-edge radial
+                                    # normal there picks up a small position-dependent bias relative to the exact
+                                    # face normal. Only snap when the bias is small (dot > 0.95) so that contacts on
+                                    # real cliff edges, where MPR's normal is genuinely far from any single cell's
+                                    # top face normal, keep MPR's result.
+                                    top_face_normal = feature_normal
+                                    if top_face_normal.dot(normal) > 0.95:
+                                        normal = top_face_normal
+                                        snap_fired = True
+                                        # Cell is essentially horizontal in the terrain's local frame (within ~8
+                                        # deg). Independent of the terrain's world orientation.
+                                        face_face = top_face_normal[2] > 0.99
+
+                                    normal = gu.qd_transform_by_quat(normal, gb_quat)
+                                    contact_pos = gu.qd_transform_by_quat(contact_pos, gb_quat)
+                                    contact_pos = contact_pos + gb_pos
+
+                                    # No perturbation correction: the perturbation magnitude (mc_perturbation) is
+                                    # small enough that the perturbed contact_pos stays close to the unperturbed
+                                    # contact patch. The deduplication tolerance downstream picks the unique corner
+                                    # contacts and the constraint solver tolerates the residual offset.
+
+                                    contact_pos = func_apply_smooth_refinement(
+                                        i_ga,
+                                        i_gb,
+                                        normal,
+                                        penetration,
+                                        contact_pos,
+                                        dyn_state.geoms.pos[i_ga, i_b],
+                                        dyn_state.geoms.quat[i_ga, i_b],
+                                        dyn_state.geoms.pos[i_gb, i_b],
+                                        dyn_state.geoms.quat[i_gb, i_b],
+                                        dyn_info,
+                                        rigid_config,
+                                    )
+
+                                    valid = True
+                                    i_c = collider_state.n_contacts[i_b]
+                                    for j in range(n_con):
+                                        if ((contact_pos - collider_state.contact_data.pos[i_c-j-1, i_b]).norm() < tolerance
+                                            and (normal - collider_state.contact_data.normal[i_c-j-1, i_b]).norm()
+                                                < collider_info.diff_normal_tolerance[None]):
+                                            valid = False
+                                            break
+                                    if valid and i_detection > 0 and not snap_fired:
+                                        # Perturbed contacts are only kept when they still describe a face-vs-face
+                                        # contact on the same horizontal cell face. A perturbed corner that landed
+                                        # against a cliff wall (snap did not fire) is a fictitious contact.
+                                        valid = False
+
+                                    if valid:
+                                        i_pair = collider_info.collision_pair_idx[
+                                            (i_gb, i_ga) if i_ga > i_gb else (i_ga, i_gb)
+                                        ]
+                                        func_add_contact(
+                                            i_ga,
+                                            i_gb,
+                                            i_b,
+                                            i_pair,
+                                            normal,
+                                            contact_pos,
+                                            penetration,
+                                            dyn_state,
+                                            collider_state,
+                                            dyn_info,
+                                            rigid_info,
+                                            collider_info,
+                                            use_atomic=False,
+                                            errno=errno,
+                                        )
+                                        n_con = n_con + 1
+                                        if i_detection == 0 and not is_col_0:
+                                            is_col_0 = True
+                                            # Perturbation only applies on essentially-horizontal cell faces (in the
+                                            # terrain's local frame, within ~8 deg of the heightfield +z): on
+                                            # steeper slopes the corner contacts generated by perturbation map to
+                                            # different parts of neighbouring cells and create constraint-solver
+                                            # oscillation.
+                                            face_face_0 = face_face
+                                            contact_pos_0 = contact_pos
+                                            normal_0 = normal
+                                            if face_face_0:
+                                                axis_0, axis_1 = func_contact_orthogonals(
+                                                    i_ga,
+                                                    i_gb,
+                                                    i_b,
+                                                    normal_0,
+                                                    geoms_init_AABB,
+                                                    dyn_state,
+                                                    dyn_info,
+                                                    rigid_info,
+                                                    rigid_config,
+                                                )
 
 
 @qd.func

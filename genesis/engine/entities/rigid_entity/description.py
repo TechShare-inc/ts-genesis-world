@@ -1683,12 +1683,18 @@ class TerrainEntityDescription(RigidEntityDescription):
     them at runtime. They stand here because no link describes them.
     """
 
+    terrain_exact_surface: dict | None = None
     terrain_hf: np.ndarray | None = None
     terrain_scale: np.ndarray | None = None
 
     def _load_morph(self, morph, resolution: Resolution):
         """Load the height field a terrain morph describes, with its scales and the meshes standing for it."""
         vmesh, mesh, terrain_hf = tu.parse_terrain(morph, self.surface)
+        if morph.exact_surface is not None:
+            from genesis.utils.terrain_exact import prepare_surface
+            vmesh, mesh, self.terrain_exact_surface = prepare_surface(
+                terrain_hf.shape, morph.horizontal_scale, morph.exact_surface, self.surface
+            )
         self.terrain_scale = np.array((morph.horizontal_scale, morph.vertical_scale), dtype=gs.np_float)
         self.terrain_hf = terrain_hf * self.terrain_scale[1]
 

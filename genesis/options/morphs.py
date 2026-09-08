@@ -1388,6 +1388,8 @@ class Terrain(Morph):
         ["random_uniform_terrain", "pyramid_stairs_terrain", "sloped_terrain"],
     ]
     height_field: FGridArrayType | None = None
+    # Experimental exact Terrain contact. See utils.terrain_exact for the payload contract.
+    exact_surface: dict | None = None
     name: str | None = None
     subterrain_parameters: dict[str, dict] | None = None
 

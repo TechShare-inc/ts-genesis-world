@@ -20,6 +20,16 @@ class TerrainEntity(RigidEntity):
         # Collider storage covers only the first collision terrain, while height queries support every terrain
         # entity, kinematic ones included. Assigned after the model loads, so it covers a morph and a description.
         self._terrain_height_field = torch.as_tensor(self.terrain_hf, dtype=gs.tc_float, device=gs.device)
+        if self.terrain_exact_surface is not None:
+            self._exact_query_data = {
+                key: torch.as_tensor(self.terrain_exact_surface["exact_surface_"+key], device=gs.device)
+                for key in ("cell_mask", "cell_offsets", "feature_indices", "triangles")
+            }
+
+
+    @property
+    def terrain_exact_surface(self):
+        return self._desc.terrain_exact_surface
 
     @property
     def terrain_hf(self) -> np.ndarray:
@@ -63,4 +73,7 @@ class TerrainEntity(RigidEntity):
         GenesisException
             If the shape of `positions` is unsupported.
         """
+        if self.terrain_exact_surface is not None:
+            from genesis.utils.terrain_exact import query_heights
+            return query_heights(self, positions, envs_idx)
         return self._solver.get_terrain_height(positions, self.base_link_idx, envs_idx)

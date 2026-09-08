@@ -1308,6 +1308,7 @@ def get_verts_spatial_grid(solver):
 @qd.data_oriented
 class ColliderStaticConfig(metaclass=AutoInitMeta):
     has_terrain: bool
+    has_exact_terrain_surface: bool
     # True when the scene has convex-convex collision pairs not handled by
     # func_narrow_phase_convex_specializations (box-box, plane-box). Computed once
     # at scene build time by iterating all geom pairs in collider._init_static_config().
@@ -1939,6 +1940,11 @@ class ColliderInfo:
     terrain_rc: qd.Tensor
     terrain_scale: qd.Tensor
     terrain_xyz_maxmin: qd.Tensor
+    terrain_exact_surface_cell_mask: qd.Tensor
+    terrain_exact_surface_cell_offsets: qd.Tensor
+    terrain_exact_surface_feature_indices: qd.Tensor
+    terrain_exact_surface_triangles: qd.Tensor
+    terrain_exact_surface_normals: qd.Tensor
     # multi contact perturbation and tolerance
     mc_perturbation: qd.Tensor
     mc_tolerance: qd.Tensor
@@ -1964,9 +1970,11 @@ def get_collider_info(
     sdf_info,
     **kwargs,
 ):
+    exact = None
     for geom in solver.geoms:
         if geom.type == gs.GEOM_TYPE.TERRAIN:
             terrain_hf_shape = geom.entity.terrain_hf.shape
+            exact = geom.entity.terrain_exact_surface
             break
     else:
         terrain_hf_shape = 1
@@ -1992,6 +2000,11 @@ def get_collider_info(
         terrain_rc=V(dtype=gs.qd_int, shape=(2,)),
         terrain_scale=V(dtype=gs.qd_float, shape=(2,)),
         terrain_xyz_maxmin=V(dtype=gs.qd_float, shape=(6,)),
+        terrain_exact_surface_cell_mask=V(dtype=gs.qd_int, shape=(max(len(exact["exact_surface_cell_mask"]), 1),) if exact is not None else (1,)),
+        terrain_exact_surface_cell_offsets=V(dtype=gs.qd_int, shape=(max(len(exact["exact_surface_cell_offsets"]), 1),) if exact is not None else (1,)),
+        terrain_exact_surface_feature_indices=V(dtype=gs.qd_int, shape=(max(len(exact["exact_surface_feature_indices"]), 1),) if exact is not None else (1,)),
+        terrain_exact_surface_triangles=V(dtype=gs.qd_vec3, shape=(max(len(exact["exact_surface_triangles"]), 1), 3) if exact is not None else (1,3)),
+        terrain_exact_surface_normals=V(dtype=gs.qd_vec3, shape=(max(len(exact["exact_surface_normals"]), 1),) if exact is not None else (1,)),
         mc_perturbation=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_perturbation"]),
         mc_tolerance=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mc_tolerance"]),
         mpr_to_gjk_overlap_ratio=V_SCALAR_FROM(dtype=gs.qd_float, value=kwargs["mpr_to_gjk_overlap_ratio"]),

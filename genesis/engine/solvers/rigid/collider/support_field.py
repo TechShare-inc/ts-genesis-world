@@ -336,13 +336,13 @@ def _func_support_cylinder(
 
 @qd.func
 def _func_support_prism(i_b, d, collider_state: array_class.ColliderState):
-    istart = 3
-    if d[2] < 0:
-        istart = 0
-
+    # Keep upstream's tie order for vertical prisms, then search the other half.
+    # Arbitrarily extruded wall prisms need all six vertices.
+    istart = 0 if d[2] < 0 else 3
     ibest = istart
     best = collider_state.prism[istart, i_b].dot(d)
-    for i in range(istart + 1, istart + 3):
+    for offset in range(1, 6):
+        i = (istart + offset) % 6
         dot = collider_state.prism[i, i_b].dot(d)
         if dot > best:
             ibest = i

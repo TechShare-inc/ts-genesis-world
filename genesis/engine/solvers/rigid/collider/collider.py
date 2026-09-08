@@ -242,8 +242,15 @@ class Collider:
 
         # Initialize the static config, which stores every data that are compile-time constants.
         # Note that updating any of them will trigger recompilation.
+        terrain_geoms = [g for g in self._solver.geoms if g.type == gs.GEOM_TYPE.TERRAIN]
+        if len(terrain_geoms) > 1 and any(g.entity.terrain_exact_surface is not None for g in terrain_geoms):
+            gs.raise_exception("Exact Terrain contact requires a single collision Terrain per scene.")
         self.collider_config = array_class.ColliderStaticConfig(
             has_terrain=has_terrain,
+            has_exact_terrain_surface=any(
+                g.type == gs.GEOM_TYPE.TERRAIN and g.entity.terrain_exact_surface is not None
+                for g in self._solver.geoms
+            ),
             has_non_box_plane_convex_convex=has_non_box_plane_convex_convex,
             has_convex_specialization=has_convex_specialization,
             has_nonconvex_nonterrain=has_nonconvex_nonterrain,
@@ -766,6 +773,15 @@ class Collider:
                 dtype=gs.np_float,
             )
 
+            exact = entity.terrain_exact_surface
+            if exact is not None:
+                triangles = exact["exact_surface_triangles"]
+                if len(triangles):
+                    xyz_maxmin[2] = max(xyz_maxmin[2], triangles[:,:,2].max())
+                    xyz_maxmin[5] = min(xyz_maxmin[5], triangles[:,:,2].min()-1.0)
+                for key, value in exact.items():
+                    if len(value):
+                        getattr(self.collider_info, "terrain_"+key).from_numpy(value)
             self.collider_info.terrain_hf.from_numpy(entity.terrain_hf)
             self.collider_info.terrain_rc.from_numpy(rc)
             self.collider_info.terrain_scale.from_numpy(entity.terrain_scale)
