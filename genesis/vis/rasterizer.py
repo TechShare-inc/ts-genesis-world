@@ -52,6 +52,32 @@ class Rasterizer(RBC):
         )
         self._camera_targets[camera.uid] = pyrender.Renderer(camera.res[0], camera.res[1], self._context.jit)
 
+    def attach_viewer(self, viewer, scene):
+        """Move camera targets to a newly built interactive GL context."""
+        self._rebuild_context(viewer, scene)
+
+    def detach_viewer(self):
+        """Move camera targets offscreen before discarding the window."""
+        if not self._offscreen:
+            self._rebuild_context(None)
+
+    def _rebuild_context(self, viewer, scene=None):
+        sizes = {uid: (target.viewport_width, target.viewport_height)
+                 for uid, target in self._camera_targets.items()}
+        # Delete buffers in their owning context before Viewer.build changes the
+        # process GL platform or the old window is closed.
+        self._destroy_targets()
+        self._context._scene._meshes_updated = True
+        if self._viewer is not None:
+            self._viewer.stop()
+        self._viewer = viewer
+        self._offscreen = viewer is None
+        if viewer is not None:
+            viewer.build(scene)
+        self.build()
+        self._camera_targets = {uid: pyrender.Renderer(width, height, self._context.jit)
+                                for uid, (width, height) in sizes.items()}
+
     def update_camera(self, camera):
         self._camera_nodes[camera.uid].camera.yfov = np.deg2rad(camera.fov)
         self._context.set_node_pose(self._camera_nodes[camera.uid], camera.transform)
@@ -156,7 +182,9 @@ class Rasterizer(RBC):
         for node in self._camera_nodes.values():
             self._context.remove_node(node)
         self._camera_nodes.clear()
+        self._destroy_targets()
 
+    def _destroy_targets(self):
         if self._offscreen:
             if self._renderer is not None:
                 # Freeing this renderer's GL resources (its camera targets and its own context) requires its

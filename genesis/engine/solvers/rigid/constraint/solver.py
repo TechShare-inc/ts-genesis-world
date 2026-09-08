@@ -291,6 +291,8 @@ class ConstraintSolver:
         )
 
     def resolve(self):
+        from ..constraint_failure import capture_pre_solve
+        capture_pre_solve(self._solver.dyn_state, self.constraint_state, self._solver._constraint_failure_snapshot)
         # func_solve_init is launched by each dispatch entrypoint (func_solve_body_monolith / func_solve_decomposed),
         # not here: only the entrypoint statically knows its arm, which determines whether the init factor/gradient is
         # done (monolith) or skipped (decomposed re-factors in-loop).
@@ -303,6 +305,7 @@ class ConstraintSolver:
             self._n_iterations,
         )
 
+        self._solver.capture_constraint_failure_snapshot(self._solver._sim.cur_substep_global)
         func_update_qacc(self._solver.dyn_state, self.constraint_state, self._solver.rigid_config, self._solver._errno)
 
         if self._solver._options.noslip_iterations > 0:

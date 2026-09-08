@@ -208,6 +208,21 @@ class Viewer(RBC):
         self._camera_up = pose[:3, 1].copy()
         self._camera_node = self.context.add_node(pyrender.PerspectiveCamera(yfov=yfov), pose=pose)
 
+    def is_visible(self):
+        return self.is_alive() and self._pyrender_viewer.render_enabled
+
+    def show(self):
+        if not self.is_alive():
+            return False
+        self._pyrender_viewer.set_render_enabled(True)
+        return True
+
+    def hide(self):
+        if not self.is_alive():
+            return False
+        self._pyrender_viewer.set_render_enabled(False)
+        return True
+
     def update(self, auto_refresh=None, force=False):
         if not self.is_alive():
             gs.raise_exception("Viewer closed.")

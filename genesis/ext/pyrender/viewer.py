@@ -189,6 +189,8 @@ class Viewer(pyglet.window.Window):
         self._render_lock = RLock()
         self._initialized_event = Event()
         self._is_active = False
+        self._render_enabled = True
+        self._visibility_request = None
         self._exception = None
         self._thread: Optional[Thread] = None
         self._run_in_thread = run_in_thread
@@ -348,6 +350,15 @@ class Viewer(pyglet.window.Window):
         continue.
         """
         return self._render_lock
+
+    @property
+    def render_enabled(self):
+        return self._render_enabled
+
+    def set_render_enabled(self, enabled):
+        """Queue window visibility on its event thread and suspend onscreen rendering."""
+        self._render_enabled = bool(enabled)
+        self._visibility_request = self._render_enabled
 
     @property
     def is_active(self):
@@ -662,7 +673,7 @@ class Viewer(pyglet.window.Window):
             self._camera_node = None
         except Exception:
             pass
-        if self._prior_main_camera_node is not None:
+        if self._prior_main_camera_node is not None and self.scene.has_node(self._prior_main_camera_node):
             self.scene.main_camera_node = self._prior_main_camera_node
         self._prior_main_camera_node = None
 
@@ -761,6 +772,8 @@ class Viewer(pyglet.window.Window):
         self.render_flags["seg"] = False
         self.render_flags["depth"] = False
         self.render_flags["env_separate_rigid"] = saved_env_separate_rigid
+        if self._exception is not None:
+            gs.raise_exception_from("Offscreen rendering failed in viewer thread.", self._exception)
         return self._offscreen_result
 
     def wait_until_initialized(self):
@@ -973,6 +986,14 @@ class Viewer(pyglet.window.Window):
         """The timer callback."""
         # Don't run old dead events after we've already closed
         if not self._is_active:
+            return
+
+        if self._visibility_request is not None:
+            self.set_visible(self._visibility_request)
+            if self._visibility_request:
+                self.activate()
+            self._visibility_request = None
+        if not self._render_enabled:
             return
 
         if self.viewer_flags["rotate"] and not self.viewer_flags["mouse_pressed"]:

@@ -31,6 +31,7 @@ class Visualizer(RBC):
     def __init__(self, scene, show_viewer, vis_options, viewer_options, renderer_options):
         self._t = -1
         self._scene = scene
+        self._viewer_options = viewer_options
 
         self._is_built = False
         self._context = None
@@ -109,6 +110,57 @@ class Visualizer(RBC):
     def __del__(self):
         self.destroy()
 
+    def attach_viewer(self):
+        """Attach an interactive window to an already built scene."""
+        if self._viewer is not None and self._viewer.is_alive():
+            return False
+        if not self._is_built:
+            gs.raise_exception("Visualizer must be built before attaching a viewer.")
+        if self._viewer is not None:
+            self.detach_viewer()
+        if any(ref() not in (None, self._scene) for ref in gs._scene_registry):
+            gs.raise_exception("Interactive viewer not supported when managing multiple scenes.")
+        height, _, scale = gs.utils.try_get_display_size()
+        options = self._viewer_options
+        if options.res is None:
+            h = height * scale * VIEWER_DEFAULT_HEIGHT_RATIO
+            options.res = (int(h / VIEWER_DEFAULT_ASPECT_RATIO), int(h))
+        if options.run_in_thread is None:
+            options.run_in_thread = sys.platform != "darwin"
+        if sys.platform == "darwin" and options.run_in_thread:
+            gs.raise_exception("Running viewer in background thread is not supported on MacOS.")
+        from .viewer import Viewer
+        viewer = Viewer(options, self._context)
+        try:
+            self._rasterizer.attach_viewer(viewer, self._scene)
+        except Exception:
+            viewer.stop()
+            raise
+        self._viewer = viewer
+        self.viewer_lock = viewer.lock
+        viewer.update(auto_refresh=True, force=True)
+        return True
+
+    def detach_viewer(self):
+        if self._viewer is None:
+            return False
+        self._rasterizer.detach_viewer()
+        self._viewer.stop()
+        if self._viewer._camera_node is not None:
+            self._context.remove_node(self._viewer._camera_node)
+            self._viewer._camera_node = None
+        self._viewer = None
+        self.viewer_lock = DummyViewerLock()
+        return True
+
+    def show_viewer(self):
+        if self._viewer is not None and self._viewer.show():
+            return True
+        return self.attach_viewer()
+
+    def hide_viewer(self):
+        return self._viewer.hide() if self._viewer is not None else False
+
     def destroy(self):
         # Cameras go first, so that a recording still running is finalized while the renderers are alive.
         for camera in self._cameras:
@@ -184,7 +236,10 @@ class Visualizer(RBC):
             self._batch_renderer.reset()
 
         if self._viewer is not None:
-            self._viewer.update(auto_refresh=True)
+            if not self._viewer.is_alive():
+                self.detach_viewer()
+            elif self._viewer.is_visible():
+                self._viewer.update(auto_refresh=True)
 
     def build(self):
         self._context.build(self._scene)
@@ -214,7 +269,10 @@ class Visualizer(RBC):
         if force:  # force update
             self.reset()
         elif self._viewer is not None:
-            self._viewer.update(auto_refresh=auto, force=force)
+            if not self._viewer.is_alive():
+                self.detach_viewer()
+            elif self._viewer.is_visible():
+                self._viewer.update(auto_refresh=auto, force=force)
 
     def update_visual_states(self, force_render: bool = False):
         """

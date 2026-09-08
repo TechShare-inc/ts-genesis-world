@@ -1,6 +1,8 @@
 import math
 import os
 import sys
+import json
+from pathlib import Path
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
@@ -1242,6 +1244,33 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
     def _init_constraint_solver(self):
         # Islands are a per-island Newton solve inside ConstraintSolver.resolve, gated on use_contact_island.
         self.constraint_solver = ConstraintSolver(self)
+        from .constraint_failure import get_constraint_failure_snapshot
+        self._constraint_failure_snapshot = get_constraint_failure_snapshot(self)
+        self._constraint_failure_log_path = None
+
+    def set_constraint_failure_log_path(self, path):
+        self._constraint_failure_log_path = Path(path)
+
+    def capture_constraint_failure_snapshot(self, substep_global):
+        from .constraint_failure import kernel_detect_constraint_failure, kernel_capture_constraint_failure
+        kernel_detect_constraint_failure(self.constraint_solver.constraint_state, self._constraint_failure_snapshot)
+        kernel_capture_constraint_failure(self.rigid_info, self.dyn_state.dofs, self.dyn_state.links,
+            self.dyn_state.geoms, self.collider.collider_state, self.constraint_solver.constraint_state,
+            self._constraint_failure_snapshot, substep_global)
+
+    def constraint_failure_diagnostic(self):
+        from .constraint_failure import diagnostic
+        if not int(qd_to_numpy(self._constraint_failure_snapshot.captured).item()):
+            gs.raise_exception("No non-finite constraint failure has been captured.")
+        return diagnostic(self)
+
+    def _write_constraint_failure(self):
+        if self._constraint_failure_log_path is not None:
+            path = self._constraint_failure_log_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(json.dumps(self.constraint_failure_diagnostic(), indent=2, allow_nan=False) + "\n")
+            temporary.replace(path)
 
     def update_forward_pos(self):
         """Run forward kinematics over links and geoms if they are not already up to date for the current pose.
@@ -1342,6 +1371,7 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
                 "solver-internal error, please report it."
             )
         if errno & array_class.ErrorCode.INVALID_FORCE_NAN:
+            self._write_constraint_failure()
             gs.raise_exception("Invalid constraint forces causing 'nan'. Please decrease Rigid simulation timestep.")
         if errno & array_class.ErrorCode.INVALID_ACC_NAN:
             gs.raise_exception("Invalid accelerations causing 'nan'. Please decrease Rigid simulation timestep.")
