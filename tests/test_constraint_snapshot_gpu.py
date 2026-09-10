@@ -4,9 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import genesis as gs
 import numpy as np
+
+import genesis as gs
+from genesis.engine.solvers.rigid.constraint_failure import capture_pre_solve
 from genesis.utils.misc import qd_to_numpy
+from tests.utils.assertions import assert_equal
 
 
 class ConstraintSnapshotTests(unittest.TestCase):
@@ -18,26 +21,49 @@ class ConstraintSnapshotTests(unittest.TestCase):
         scene = gs.Scene(show_viewer=False)
         scene.add_entity(gs.morphs.Plane())
         scene.add_entity(gs.morphs.Box(size=(.2,.2,.2),pos=(0,0,.12)))
-        scene.build(n_envs=4)
+        scene.build(n_envs=257)
         self.addCleanup(scene.destroy)
         scene.step(update_visualizer=False)
         solver=scene.sim.rigid_solver
         with self.assertRaises(Exception):
             solver.constraint_failure_diagnostic()
+        state = solver.constraint_solver.constraint_state
+        snapshot = solver._constraint_failure_snapshot
+        warmstart = np.arange(np.prod(state.qacc_ws.shape), dtype=gs.np_float).reshape(state.qacc_ws.shape)
+        acceleration = warmstart * 2 + 1
+        is_warmstart = np.arange(scene.n_envs) % 2 == 0
+        state.qacc_ws.from_numpy(warmstart)
+        solver.dyn_state.dofs.acc.from_numpy(acceleration)
+        state.is_warmstart.from_numpy(is_warmstart)
+        capture_pre_solve(solver.dyn_state, state, snapshot)
+        assert_equal(qd_to_numpy(snapshot.pre_solve_qacc_ws), warmstart)
+        assert_equal(qd_to_numpy(snapshot.pre_solve_dof_acc), acceleration)
+        assert_equal(qd_to_numpy(snapshot.pre_solve_is_warmstart), is_warmstart)
         qacc=solver.constraint_solver.constraint_state.qacc
         values=qd_to_numpy(qacc)
         values[1,2]=np.nan
         values[2,3]=np.inf
+        values[0,-1]=-np.inf
         qacc.from_numpy(values)
         solver.capture_constraint_failure_snapshot(17)
         first=solver.constraint_failure_diagnostic()
         self.assertEqual(first["environment_index"],2)
-        self.assertEqual(first["invalid_environment_indices"],[2,3])
+        self.assertEqual(first["invalid_environment_indices"],[2,3,scene.n_envs-1])
         self.assertEqual(first["invalid_dof_indices"],[1])
+        assert_equal(first["constraint"]["qacc_ws_before_solve"], warmstart[:, 2])
+        assert_equal(first["dofs"]["acc_before_solve"], acceleration[:, 2])
+        self.assertTrue(first["constraint"]["is_warmstart_before_solve"])
         self.assertEqual(first["simulation"]["substep_global"],17)
         json.dumps(first,allow_nan=False)
         values[:]=np.nan
         qacc.from_numpy(values)
+        state.qacc_ws.fill(-1)
+        solver.dyn_state.dofs.acc.fill(-2)
+        state.is_warmstart.fill(False)
+        capture_pre_solve(solver.dyn_state, state, snapshot)
+        assert_equal(qd_to_numpy(snapshot.pre_solve_qacc_ws), warmstart)
+        assert_equal(qd_to_numpy(snapshot.pre_solve_dof_acc), acceleration)
+        assert_equal(qd_to_numpy(snapshot.pre_solve_is_warmstart), is_warmstart)
         solver.capture_constraint_failure_snapshot(18)
         self.assertEqual(first,solver.constraint_failure_diagnostic())
         with tempfile.TemporaryDirectory(dir=Path.cwd()/"build") as directory:
@@ -45,6 +71,20 @@ class ConstraintSnapshotTests(unittest.TestCase):
             solver.set_constraint_failure_log_path(path)
             solver._write_constraint_failure()
             self.assertEqual(json.loads(path.read_text()),first)
+        solver.clear_constraint_failure_snapshot()
+        capture_pre_solve(solver.dyn_state, state, solver._constraint_failure_snapshot)
+        values.fill(0)
+        values[0,1]=-np.inf
+        qacc.from_numpy(values)
+        solver.capture_constraint_failure_snapshot(19)
+        second=solver.constraint_failure_diagnostic()
+        self.assertEqual(second["environment_index"],1)
+        self.assertEqual(second["invalid_environment_indices"],[1])
+        self.assertEqual(second["simulation"]["substep_global"],19)
+        self.assertEqual(second["constraint"]["qacc"][0],"-inf")
+        assert_equal(second["constraint"]["qacc_ws_before_solve"], -np.ones_like(warmstart[:, 1]))
+        assert_equal(second["dofs"]["acc_before_solve"], -2 * np.ones_like(acceleration[:, 1]))
+        self.assertFalse(second["constraint"]["is_warmstart_before_solve"])
 
 
 if __name__ == "__main__":

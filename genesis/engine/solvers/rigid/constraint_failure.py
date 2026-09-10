@@ -421,10 +421,11 @@ def kernel_detect_constraint_failure(
     constraint_state: array_class.ConstraintState,
     snapshot: ConstraintFailureSnapshot,
 ):
-    if snapshot.captured[None] == 0:
-        n_dofs = constraint_state.qacc.shape[0]
-        _B = constraint_state.qacc.shape[1]
-        for i_d, i_b in qd.ndrange(n_dofs, _B):
+    n_dofs = constraint_state.qacc.shape[0]
+    _B = constraint_state.qacc.shape[1]
+    # Top-level loops keep the full-environment scan parallel on the GPU.
+    for i_d, i_b in qd.ndrange(n_dofs, _B):
+        if snapshot.captured[None] == 0:
             if qd.math.isnan(constraint_state.qacc[i_d, i_b]) or qd.math.isinf(constraint_state.qacc[i_d, i_b]):
                 qd.atomic_min(snapshot.candidate_environment_index[None], i_b)
                 snapshot.invalid_environment_mask[i_b] = 1
@@ -531,9 +532,11 @@ def kernel_capture_constraint_failure(
 @qd.kernel(fastcache=True)
 def capture_pre_solve(dyn_state: array_class.DynState, constraint_state: array_class.ConstraintState,
                       snapshot: ConstraintFailureSnapshot):
-    if snapshot.captured[None] == 0:
-        for i_d, i_b in qd.ndrange(*constraint_state.qacc_ws.shape):
+    # Keep the copy loops top-level for the same reason as the detection loop.
+    for i_d, i_b in qd.ndrange(*constraint_state.qacc_ws.shape):
+        if snapshot.captured[None] == 0:
             snapshot.pre_solve_qacc_ws[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]
             snapshot.pre_solve_dof_acc[i_d, i_b] = dyn_state.dofs.acc[i_d, i_b]
-        for i_b in range(constraint_state.is_warmstart.shape[0]):
+    for i_b in range(constraint_state.is_warmstart.shape[0]):
+        if snapshot.captured[None] == 0:
             snapshot.pre_solve_is_warmstart[i_b] = constraint_state.is_warmstart[i_b]
