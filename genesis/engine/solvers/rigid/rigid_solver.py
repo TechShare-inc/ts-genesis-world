@@ -1258,6 +1258,14 @@ class RigidSolver(GravityMixin, TimeBasedMixin, KinematicSolver):
             self.dyn_state.geoms, self.collider.collider_state, self.constraint_solver.constraint_state,
             self._constraint_failure_snapshot, substep_global)
 
+    def clear_constraint_failure_snapshot(self):
+        """Rearm first-failure capture after the caller has persisted an incident.
+
+        This does not reset physical state or clear per-environment error flags.
+        """
+        from .constraint_failure import get_constraint_failure_snapshot
+        self._constraint_failure_snapshot = get_constraint_failure_snapshot(self)
+
     def constraint_failure_diagnostic(self):
         from .constraint_failure import diagnostic
         if not int(qd_to_numpy(self._constraint_failure_snapshot.captured).item()):
