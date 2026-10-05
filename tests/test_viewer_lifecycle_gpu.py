@@ -27,12 +27,14 @@ class ViewerLifecycleTests(unittest.TestCase):
         scene.build(n_envs=4)
         self.addCleanup(scene.destroy)
         visualizer=scene._visualizer
+        original_options = scene.options.viewer.model_dump()
         reference = camera.render()[0]
         for operation in (visualizer.show_viewer, visualizer.hide_viewer,
                           visualizer.show_viewer, visualizer.detach_viewer,
                           visualizer.show_viewer):
             print("viewer operation:", operation.__name__, flush=True)
             self.assertTrue(operation())
+            self.assertEqual(scene.options.viewer.model_dump(), original_options)
             visualizer.update(force=True)
             rgb=camera.render()[0]
             self.assertEqual(rgb.shape,reference.shape)

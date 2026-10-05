@@ -2,6 +2,7 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +17,44 @@ class ConstraintSnapshotTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         gs.init(backend=gs.gpu, logging_level="warning")
+
+    def test_normal_step_captures_failure_before_integration(self):
+        from genesis.engine.solvers.rigid import rigid_solver as rigid_module
+
+        scene = gs.Scene(show_viewer=False)
+        scene.add_entity(gs.morphs.Plane())
+        scene.add_entity(gs.morphs.Box(size=(.2, .2, .2), pos=(0, 0, .12)))
+        scene.add_entity(gs.morphs.Box(size=(.2, .2, .2), pos=(2, 0, .12)))
+        scene.build(n_envs=2)
+        self.addCleanup(scene.destroy)
+        scene.step(update_visualizer=False)
+        solver = scene.sim.rigid_solver
+        before = qd_to_numpy(solver.rigid_info.qpos).copy()
+        substep = solver._sim.cur_substep_global
+        solve = rigid_module.func_solve_body
+
+        def inject_failure(*args):
+            solve(*args)
+            state = solver.constraint_solver.constraint_state
+            values = qd_to_numpy(state.qacc).copy()
+            values[0, 1] = np.nan
+            state.qacc.from_numpy(values)
+
+        with patch.object(rigid_module, "func_solve_body", side_effect=inject_failure):
+            scene.step(update_visualizer=False)
+        with self.assertRaisesRegex(Exception, "Invalid constraint forces"):
+            solver.check_errno()
+        result = solver.constraint_failure_diagnostic()
+        self.assertEqual(result["schema_version"], 4)
+        self.assertEqual(result["environment_index"], 1)
+        self.assertEqual(result["simulation"]["substep_global"], substep)
+        assert_equal(result["replay_state"]["qpos"], before[:, 1])
+        self.assertEqual(len(result["constraint"]["islands"]), 2)
+        self.assertEqual(set(result["constraint"]["dofs_island_idx"]), {0, 1})
+        for island in result["constraint"]["islands"]:
+            self.assertIn("ls_alpha", island)
+            self.assertIn("line_search_evaluated", island)
+        json.dumps(result, allow_nan=False)
 
     def test_first_invalid_solve_is_immutable_and_json_safe(self):
         scene = gs.Scene(show_viewer=False)

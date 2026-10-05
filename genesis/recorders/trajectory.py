@@ -371,9 +371,9 @@ class Trajectory:
     show_viewer : bool, optional
         Whether the created scene opens an interactive viewer. Defaults to False.
     viewer_options : ViewerOptions, optional
-        Viewer options replacing the recorded ones in the created scene. If None, the recorded ones stand.
+        Viewer options overriding the recorded ones in the created scene, for the fields they set.
     vis_options : VisOptions, optional
-        Visualizer options replacing the recorded ones in the created scene. If None, the recorded ones stand.
+        Visualizer options overriding the recorded ones in the created scene, for the fields they set.
     renderer : RendererOptions, optional
         Renderer replacing the recorded one in the created scene. If None, the recorded one stands.
     """
@@ -504,7 +504,8 @@ class Trajectory:
     def time(self, index: int) -> np.ndarray:
         """The simulated time of each environment at frame 'index', in seconds, as 'Scene.get_time' reports it."""
         # Multiplied as the simulator multiplies its own clock, so the two agree to the bit.
-        return tensor_to_array(torch.as_tensor(self.frame(index)[STEPS_FIELD], device="cpu") * self._manifest["dt"])
+        steps = torch.as_tensor(self.frame(index)[STEPS_FIELD], dtype=gs.tc_float, device="cpu")
+        return tensor_to_array(steps * self._manifest["dt"])
 
     def seek(self, index: int) -> None:
         """Put the scene in the state of frame 'index', counted from the end when negative.

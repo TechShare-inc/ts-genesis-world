@@ -1,7 +1,7 @@
 """Immutable first non-finite constraint solve, captured before integration.
 
-Version 3 records the current solver's shifted line-search improvement and
-alpha, and actual inertial mass/world position instead of removed shift fields.
+Version 4 records each island's line-search diagnostics and dof membership.
+Unused qacc_prev and qf_actuator fields removed upstream are no longer reported.
 Raw contact data is associated with constraint rows through contact_sort_idx.
 """
 import dataclasses
@@ -47,11 +47,14 @@ class ConstraintFailureSnapshot:
     n_constraints_equality: qd.Tensor
     n_constraints_frictionloss: qd.Tensor
     cost: qd.Tensor
-    ls_improvement: qd.Tensor
-    ls_alpha: qd.Tensor
-    gtol: qd.Tensor
-    ls_it: qd.Tensor
-    ls_result: qd.Tensor
+    n_islands: qd.Tensor
+    dofs_island_idx: qd.Tensor
+    island_ls_evaluated: qd.Tensor
+    island_ls_improvement: qd.Tensor
+    island_ls_alpha: qd.Tensor
+    island_ls_gtol: qd.Tensor
+    island_ls_it: qd.Tensor
+    island_ls_result: qd.Tensor
     qpos: qd.Tensor
     geom_friction_ratio: qd.Tensor
     dof_pos: qd.Tensor
@@ -63,7 +66,6 @@ class ConstraintFailureSnapshot:
     dof_acc_smooth: qd.Tensor
     dof_qf_smooth: qd.Tensor
     dof_qf_constraint: qd.Tensor
-    dof_qf_actuator: qd.Tensor
     dof_qf_applied: qd.Tensor
     dof_qf_bias: qd.Tensor
     dof_qf_passive: qd.Tensor
@@ -93,7 +95,6 @@ class ConstraintFailureSnapshot:
     contact_sol_params: qd.Tensor
     contact_force: qd.Tensor
     constraint_qacc: qd.Tensor
-    constraint_qacc_prev: qd.Tensor
     constraint_qacc_ws: qd.Tensor
     constraint_qacc_ws_before_solve: qd.Tensor
     pre_solve_qacc_ws: qd.Tensor
@@ -129,11 +130,14 @@ def get_constraint_failure_snapshot(solver):
         n_constraints_equality=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
         n_constraints_frictionloss=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
         cost=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
-        ls_improvement=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
-        ls_alpha=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
-        gtol=V_SCALAR_FROM(dtype=gs.qd_float, value=0.0),
-        ls_it=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
-        ls_result=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
+        n_islands=V_SCALAR_FROM(dtype=gs.qd_int, value=0),
+        dofs_island_idx=V(dtype=gs.qd_int, shape=(solver.n_dofs_,)),
+        island_ls_evaluated=V(dtype=gs.qd_bool, shape=(solver.n_trees_,)),
+        island_ls_improvement=V(dtype=gs.qd_float, shape=(solver.n_trees_,)),
+        island_ls_alpha=V(dtype=gs.qd_float, shape=(solver.n_trees_,)),
+        island_ls_gtol=V(dtype=gs.qd_float, shape=(solver.n_trees_,)),
+        island_ls_it=V(dtype=gs.qd_int, shape=(solver.n_trees_,)),
+        island_ls_result=V(dtype=gs.qd_int, shape=(solver.n_trees_,)),
         qpos=V(dtype=gs.qd_float, shape=(solver.n_qs_,)),
         geom_friction_ratio=V(dtype=gs.qd_float, shape=(solver.n_geoms_,)),
         dof_pos=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
@@ -145,7 +149,6 @@ def get_constraint_failure_snapshot(solver):
         dof_acc_smooth=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         dof_qf_smooth=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         dof_qf_constraint=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
-        dof_qf_actuator=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         dof_qf_applied=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         dof_qf_bias=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         dof_qf_passive=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
@@ -175,7 +178,6 @@ def get_constraint_failure_snapshot(solver):
         contact_sol_params=V_VEC(7, dtype=gs.qd_float, shape=(max_contacts,)),
         contact_force=V(dtype=gs.qd_vec3, shape=(max_contacts,)),
         constraint_qacc=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
-        constraint_qacc_prev=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         constraint_qacc_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         constraint_qacc_ws_before_solve=V(dtype=gs.qd_float, shape=(solver.n_dofs_,)),
         pre_solve_qacc_ws=V(dtype=gs.qd_float, shape=(solver.n_dofs_, solver._B)),
@@ -269,7 +271,6 @@ def diagnostic(self) -> dict:
             "acc_smooth",
             "qf_smooth",
             "qf_constraint",
-            "qf_actuator",
             "qf_applied",
             "qf_bias",
             "qf_passive",
@@ -282,7 +283,6 @@ def diagnostic(self) -> dict:
     }
     constraint_fields = {
         "qacc": value(snapshot.constraint_qacc),
-        "qacc_prev": value(snapshot.constraint_qacc_prev),
         "qacc_ws": value(snapshot.constraint_qacc_ws),
         "qacc_ws_before_solve": value(snapshot.constraint_qacc_ws_before_solve),
         "qfrc_constraint": value(snapshot.constraint_qfrc),
@@ -304,11 +304,6 @@ def diagnostic(self) -> dict:
             "n_constraints_frictionloss",
             "is_warmstart_before_solve",
             "cost",
-            "ls_improvement",
-            "ls_alpha",
-            "gtol",
-            "ls_it",
-            "ls_result",
         )
     }
     dof_names = [f"dof_{index}" for index in range(self.n_dofs_)]
@@ -379,7 +374,8 @@ def diagnostic(self) -> dict:
 
     return _json_safe(
         {
-            "schema_version": 3,
+            "schema_version": 4,
+            "removed_upstream_fields": ["constraint.qacc_prev", "dofs.qf_actuator"],
             "error": "invalid_constraint_qacc",
             "snapshot": "first_failure_pre_integration",
             "environment_index": env_index,
@@ -406,6 +402,19 @@ def diagnostic(self) -> dict:
                 **scalar_constraint_fields,
                 **constraint_fields,
                 "rows": constraint_rows,
+                "dofs_island_idx": value(snapshot.dofs_island_idx),
+                "islands": [
+                    {
+                        "island_index": i,
+                        "line_search_evaluated": bool(value(snapshot.island_ls_evaluated)[i]),
+                        **{
+                            name: value(getattr(snapshot, "island_" + name))[i]
+                            if bool(value(snapshot.island_ls_evaluated)[i]) else None
+                            for name in ("ls_improvement", "ls_alpha", "ls_gtol", "ls_it", "ls_result")
+                        },
+                    }
+                    for i in range(int(scalar(snapshot.n_islands)))
+                ],
             },
             "dofs": {"names": dof_names, **dof_fields},
             "links": {
@@ -452,11 +461,14 @@ def kernel_capture_constraint_failure(
             snapshot.n_constraints_equality[None] = constraint_state.n_constraints_equality[i_b]
             snapshot.n_constraints_frictionloss[None] = constraint_state.n_constraints_frictionloss[i_b]
             snapshot.cost[None] = constraint_state.cost[i_b]
-            snapshot.ls_improvement[None] = constraint_state.ls_improvement[i_b]
-            snapshot.ls_alpha[None] = constraint_state.ls_alpha[i_b]
-            snapshot.gtol[None] = constraint_state.gtol[i_b]
-            snapshot.ls_it[None] = constraint_state.ls_it[i_b]
-            snapshot.ls_result[None] = constraint_state.ls_result[i_b]
+            snapshot.n_islands[None] = constraint_state.island.n_islands[i_b]
+            for i_island in range(constraint_state.island.n_islands[i_b]):
+                snapshot.island_ls_evaluated[i_island] = constraint_state.island.ls_evaluated[i_island, i_b]
+                snapshot.island_ls_improvement[i_island] = constraint_state.island.ls_improvement[i_island, i_b]
+                snapshot.island_ls_alpha[i_island] = constraint_state.island.ls_alpha[i_island, i_b]
+                snapshot.island_ls_gtol[i_island] = constraint_state.island.ls_gtol[i_island, i_b]
+                snapshot.island_ls_it[i_island] = constraint_state.island.ls_it[i_island, i_b]
+                snapshot.island_ls_result[i_island] = constraint_state.island.ls_result[i_island, i_b]
             snapshot.is_warmstart_before_solve[None] = snapshot.pre_solve_is_warmstart[i_b]
 
             for i_q in range(rigid_global_info.qpos.shape[0]):
@@ -466,6 +478,7 @@ def kernel_capture_constraint_failure(
                 snapshot.geom_friction_ratio[i_g] = geoms_state.friction_ratio[i_g, i_b]
 
             for i_d in range(dofs_state.acc.shape[0]):
+                snapshot.dofs_island_idx[i_d] = constraint_state.island.dofs_island_idx[i_d, i_b]
                 snapshot.dof_pos[i_d] = dofs_state.pos[i_d, i_b]
                 snapshot.dof_vel[i_d] = dofs_state.vel[i_d, i_b]
                 snapshot.dof_vel_prev[i_d] = dofs_state.vel_prev[i_d, i_b]
@@ -475,7 +488,6 @@ def kernel_capture_constraint_failure(
                 snapshot.dof_acc_smooth[i_d] = dofs_state.acc_smooth[i_d, i_b]
                 snapshot.dof_qf_smooth[i_d] = dofs_state.qf_smooth[i_d, i_b]
                 snapshot.dof_qf_constraint[i_d] = dofs_state.qf_constraint[i_d, i_b]
-                snapshot.dof_qf_actuator[i_d] = dofs_state.qf_actuator[i_d, i_b]
                 snapshot.dof_qf_applied[i_d] = dofs_state.qf_applied[i_d, i_b]
                 snapshot.dof_qf_bias[i_d] = dofs_state.qf_bias[i_d, i_b]
                 snapshot.dof_qf_passive[i_d] = dofs_state.qf_passive[i_d, i_b]
@@ -485,7 +497,6 @@ def kernel_capture_constraint_failure(
                 snapshot.dof_ctrl_vel[i_d] = dofs_state.ctrl_vel[i_d, i_b]
                 snapshot.dof_ctrl_mode[i_d] = dofs_state.ctrl_mode[i_d, i_b]
                 snapshot.constraint_qacc[i_d] = constraint_state.qacc[i_d, i_b]
-                snapshot.constraint_qacc_prev[i_d] = constraint_state.qacc_prev[i_d, i_b]
                 snapshot.constraint_qacc_ws[i_d] = constraint_state.qacc_ws[i_d, i_b]
                 snapshot.constraint_qacc_ws_before_solve[i_d] = snapshot.pre_solve_qacc_ws[i_d, i_b]
                 snapshot.constraint_qfrc[i_d] = constraint_state.qfrc_constraint[i_d, i_b]
@@ -533,6 +544,8 @@ def kernel_capture_constraint_failure(
 def capture_pre_solve(dyn_state: array_class.DynState, constraint_state: array_class.ConstraintState,
                       snapshot: ConstraintFailureSnapshot):
     # Keep the copy loops top-level for the same reason as the detection loop.
+    for i_island, i_b in qd.ndrange(*constraint_state.island.ls_evaluated.shape):
+        constraint_state.island.ls_evaluated[i_island, i_b] = False
     for i_d, i_b in qd.ndrange(*constraint_state.qacc_ws.shape):
         if snapshot.captured[None] == 0:
             snapshot.pre_solve_qacc_ws[i_d, i_b] = constraint_state.qacc_ws[i_d, i_b]

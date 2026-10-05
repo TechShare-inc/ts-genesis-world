@@ -1,5 +1,88 @@
 # Genesis Release Note
 
+## 1.4.3
+
+This minor release focuses on improving the simulation speed for non-batch to moderate batch sizes (~4000) while reduce memory usage across the board. Besides, compilation should be up to x3 faster on Windows OS.
+
+### Bug Fixes
+
+* Fix several edge-cases related to glTF parsing. (@kevin9327) (#3342, #3343)
+* Preserve textures when replying trajectories. (@duburcqa) (#3395)
+* Preserve material textures from collision geoms duplicated as visual geoms when parsing MJCF files. (@MohammadHijjawi97) (#3399)
+* Fix 'z_up_to_R' failing when up is omitted. (@Milotrince) (#3396)
+* Fix compilation failure in performance mode on Apple Metal. (@duburcqa) (#3421)
+* Fix SDF boundary visualization. (@MohammadHijjawi97) (#3425)
+* Fix Genesis log messages printed twice when user configures root logging. (@Kashu7100) (#3427)
+* Fix the scan lines of a full-rotation spherical raycast pattern. (@MohammadHijjawi97) (#3424)
+* Fix pose getters not complying with deterministic mode on GPU. (@Milotrince) (#3387)
+* Apply scalar cross-axis coupling to IMU readings. (@cyanseek) (#3436)
+* Record the readings of multi-output sensors like IMUs. (@MohammadHijjawi97) (#3419)
+* Update the camera extrinsics when the camera moves. (@MohammadHijjawi97) (#3418)
+* Fix materials properties defined by TemperatureGrid sensors only applied by the first one. (@Milotrince) (#3439)
+* Fix normalisation of log-scaled depth images. (@jeetrex17) (#3442)
+* Check broad phase pair overflow when hibernation is enabled. (@Milotrince) (#3415)
+
+### Miscellaneous
+
+* Speed up raycasting, tactile sensing and SAP contact queries. (@duburcqa) (#3390)
+* Speed up the center of mass computation on GPU for long kinematic chains. (@duburcqa) (#3405)
+* Speed up multi-contact detection on GPU for scenes with small batch size. (@duburcqa) (#3404)
+* Speed up rigid body simulation on GPU for branched kinematic trees. (@duburcqa) (#3397)
+* Speed up rigid body simulation on GPU when the host launch overhead dominates. (@duburcqa) (#3388, #3394, #3433)
+* Speed up non-batched rigid simulation on GPU. (@duburcqa) (#3438)
+* Reduce the GPU memory footprint of rigid simulation. (@duburcqa) (#3403)
+* Reduce memory usage when using heightfield terrain. (@Kashu7100) (#3378)
+* Stop enforcing torch's global default device and dtype. (@Kashu7100) (#3431)
+* Speed up scene build by caching the description. (@Milotrince) (#3451)
+* Replace the dumb theme with a raw theme that prints plain, compact log lines. (@duburcqa) (#3452)
+* Upgrade to Quadrants 1.3.3. (@hughperkins) (#3407)
+
+## 1.4.2
+
+This release focuses on significantly improving performance on large scale scenes via hibernation. Hibernated islands should do not incure any runtime anymore. Besides, the Signorini contact resolution is in better shape but should still be consider experimental due to convergence issue.
+
+### Bug Fixes
+
+* Fix damped joints injecting energy when the constraint solve exits with a force residual. (@duburcqa) (#3375)
+* More robust convergence of the Signorini contact resolution. (@duburcqa) (#3381, #3382)
+
+### Miscellaneous
+
+* Speed up rigid simulation with hibernation enabled. (@duburcqa) (#3363, #3366, #3367, #3369)
+* Speed up the GPU rigid solver for large contact islands. (@duburcqa) (#3368)
+* Speed up the constraint solver under the elliptic friction cone on GPU. (@duburcqa) (#3380)
+* Make the kinematic tree, rather than the entity, the unit of every rigid solver pass. (@duburcqa) (#3376)
+* Avoid spurious precision-loss warning when building a rigid scene in single precision. (@duburcqa) (#3362)
+* Expose the wall time of each phase of a scene step. (@duburcqa) (#3370)
+
+## 1.4.1
+
+This release focuses on significantly improving performance on large scale scenes for both CPU and GPU. The speed is now slowing down sub-linearly wrt the number of islands on both CPU and GPU, and Jacobi equilibration for imbalanced scenes is much cheaper, and contact-rich scenes are much faster on CPU.
+
+### New Features
+
+* Support MJCF joint equalities without joint2. (@ktyang512) (#3290)
+
+### Bug Fixes
+
+* Decode normalized integer glTF accessors instead of reading their raw values. (@VihaanAgarwal) (#3330)
+* Preserve glTF normals and texture coordinates. (@jeetrex17) (#3323)
+* Honor joint actuator force range for MJCF. (@duburcqa) (#3328)
+* Open an exported scene on any platform and through gs launch. (@duburcqa) (#3340)
+
+### Miscellaneous
+
+* Speed up the constraint solver on multi-island scenes on GPU. (@duburcqa) (#3331, #3347, #3349, #3350, #3352, #3353)
+* Speed up the constraint solver when Jacobi equilibration is active. (@duburcqa) (#3344)
+* Speed up the constraint solver on contact-heavy scenes on CPU. (@duburcqa) (#3345)
+* Speed up noslip stage for small batch size on GPU. (@hughperkins) (#3273)
+* Speed up cameras and the interactive viewer for rasterizer. (@duburcqa) (#3326)
+* Speed up live plot recorders. (@duburcqa) (#3358)
+* Reduce the compilation time of the rigid solver. (@duburcqa) (#3359)
+* Decompose the rigid scene into its maximal kinematic trees. (@duburcqa) (#3356)
+* Support heterogeneous default armature. (@duburcqa) (#3326)
+* Expose entity-level public API for setting dofs limit. (@jeetrex17) (#3348)
+
 ## 1.4.0
 
 This release introduces the capability to export a scene plus a complete trajectory as a standalone archive that can be loaded on any machine while ensuring bit-exact replay using `gs replay`. The objective is making bug report much easier in the future. Only the rigid solver is supported for now. Beyond that, the static description of entities is now clearly separated from runtime getters to avoid confusion. Finally, a large number of minor bugs have been fixed, most of them related to asset parsing.

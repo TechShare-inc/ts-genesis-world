@@ -1,6 +1,7 @@
 import dataclasses
 import json
 import pickle
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
 from copy import deepcopy
@@ -76,7 +77,7 @@ def checkpoint_scene(mimic_hinges, requires_grad, show_viewer):
 
 
 @pytest.mark.required
-@pytest.mark.parametrize("model_name", ["two_free_boxes"])
+@pytest.mark.parametrize("model_name", ["free_boxes_and_slider"])
 @pytest.mark.parametrize("n_envs", [0, 2])
 def test_export_and_load_rigid(
     n_envs, xml_path, mimic_hinges, urdf_with_external_assets, xacro_robot, tmp_path, show_viewer, caplog
@@ -156,6 +157,11 @@ def test_export_and_load_rigid(
             pos=(0.0, -0.6, 0.7),
             euler=(0.0, 0.0, 30.0),
             align=True,
+        ),
+        surface=gs.surfaces.Default(
+            diffuse_texture=gs.textures.ImageTexture(
+                image_path="textures/checker.png",
+            ),
         ),
     )
     # A height field, coefficients only the asset states, and a variant per environment, none of it held by a link.
@@ -298,7 +304,7 @@ def test_export_and_load_rigid(
         stored = archive.read(MANIFEST_NAME).decode()
     assert str(tmp_path) not in stored
     assert str(get_assets_dir()) not in stored
-    assert '"two_free_boxes.xml"' in stored
+    assert '"free_boxes_and_slider.xml"' in stored
     # An entity's creation uses the description its build resolved, and that description carries the geometry.
     # Genesis therefore reads the asset file once and never again.
     Path(xml_path).unlink()
@@ -319,6 +325,10 @@ def test_export_and_load_rigid(
     # A texture holding a path rather than pixels stands for nothing, in the surface and in the meshes drawn with it
     assert restored.entities[14].surface.normal_texture is None
     assert restored.entities[14].vgeoms[0].vmesh.surface.normal_texture is None
+    # A mesh holding uvs is drawn with its texture, laid out as the authored one
+    restored_visual = restored.entities[6].vgeoms[0].get_trimesh().visual
+    assert restored_visual.kind == "texture"
+    assert_equal(restored_visual.uv, anchored.vgeoms[0].get_trimesh().visual.uv)
     # A morph names the asset it was created from, since the description stands for what was parsed out of it
     assert restored.entities[15].morph.file == "two_link.urdf.xacro"
     # A mesh states the asset it was read from by name, wherever that asset stood
@@ -426,11 +436,25 @@ def test_export_before_build(n_envs, checkpoint_scene, tmp_path, caplog):
     assert pickle.loads(pickle.dumps(scene.options.rigid)) == scene.options.rigid
     scene.build(n_envs=n_envs)
 
-    # A file states no environment layout, so whoever opens one builds it with the layout they ask for. The visualizer
-    # options are replaced at load and the physics options stand as recorded.
-    restored = gs.Scene.load(exported, vis_options=gs.options.VisOptions(show_world_frame=False))
+    # A file states no environment layout, so whoever opens one builds it with the layout they ask for. The viewer and
+    # visualizer options given at load override the recorded ones for the fields they set, and the physics options
+    # stand as recorded.
+    restored = gs.Scene.load(
+        exported,
+        viewer_options=gs.options.ViewerOptions(
+            camera_fov=60,
+        ),
+        vis_options=gs.options.VisOptions(
+            show_world_frame=False,
+        ),
+    )
     assert not restored.is_built
     assert not restored.options.vis.show_world_frame
+    assert_equal(restored.options.viewer.camera_fov, 60)
+    assert_equal(restored.options.viewer.camera_pos, scene.options.viewer.camera_pos)
+    # The viewer options are recorded as authored, whatever display and platform the scene was viewed with
+    assert restored.options.viewer.res is None
+    assert restored.options.viewer.run_in_thread is None
     assert restored.options.sim.dt == scene.options.sim.dt
     assert [entity.name for entity in restored.entities] == [entity.name for entity in scene.entities]
     # A scene destroyed while it records closes its log on the state it stopped at
@@ -454,6 +478,12 @@ def test_export_before_build(n_envs, checkpoint_scene, tmp_path, caplog):
     scene.export(built)
     assert scene.options.rigid.max_contacts is not None
     assert gs.Scene.load(built).options.rigid.max_contacts == scene.options.rigid.max_contacts
+
+    # A file asking for a viewer thread opens on every platform, in the main thread where that is the only one
+    threaded_scene = gs.Scene(viewer_options=gs.options.ViewerOptions(run_in_thread=True))
+    threaded = tmp_path / f"threaded{SCENE_FORMAT}"
+    threaded_scene.export(threaded)
+    assert gs.Scene.load(threaded).options.viewer.run_in_thread is (None if sys.platform == "darwin" else True)
 
 
 @pytest.mark.required
